@@ -360,24 +360,6 @@
     <Compile Include="tagmanager.h">
       <SubType>compile</SubType>
     </Compile>
-    <Compile Include="task.cpp">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="task.h">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="timedtask.cpp">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="timedtask.h">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="timer.cpp">
-      <SubType>compile</SubType>
-    </Compile>
-    <Compile Include="timer.h">
-      <SubType>compile</SubType>
-    </Compile>
     <Compile Include="uart.cpp">
       <SubType>compile</SubType>
     </Compile>

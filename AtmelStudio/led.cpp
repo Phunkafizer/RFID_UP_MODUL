@@ -11,7 +11,6 @@ Led::Led(void)
 
 void Led::Execute(void)
 {
-	return;
 	if (timer.IsFlagged())
 	{
 		timer.SetTime(200);

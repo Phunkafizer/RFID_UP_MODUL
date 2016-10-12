@@ -13,8 +13,12 @@ eeprom, i.e. checking and adding.
 
 #include "task.h"
 #include "timer.h"
+#include "rfid.h"
 
-#define MAX_NUM_TAGS ((64 * 128) / 5)
+typedef struct {
+	enum tag_t tagtype;
+	uint8_t data[6];
+} tag_item_t;
 
 enum tagmanagermode_e {TMM_IDLE, TMM_LOOKUP};
 
@@ -22,8 +26,9 @@ class Tagmanager: public Task
 {
 	private:
 		enum tagmanagermode_e mode;
-		uint8_t tag[5];
-		uint16_t eeprom_ptr;
+		tag_item_t tag;
+		uint16_t eepromIdx;
+		tag_item_t *tag_ptr;
 		Timer timer;
 		uint16_t numtags;
 		uint16_t maxnumtags;
@@ -37,10 +42,10 @@ class Tagmanager: public Task
 		Tagmanager(void);
 		void Init(void);
 		void Execute(void);
-		void ProcessTag(uint8_t *tag);
+		void ProcessTag(tag_item_t *tag);
 		uint16_t AddTag(uint8_t *tag);
-		void ReadTag(uint16_t i, uint8_t *tag);
-		uint8_t WriteTag(uint8_t *tag, uint16_t id);
+		void ReadTag(uint16_t idx, tag_item_t *tag);
+		uint8_t WriteTag(tag_item_t *tag, uint16_t idx);
 };
 
 extern Tagmanager tagmanager;

@@ -1,4 +1,4 @@
-/*
+ /*
 	rfid.cpp
 	rfid class for decoding EM4102 & FDX-B transponder
 	S. Seegel, post@seegel-systeme.de
@@ -11,252 +11,344 @@
 #include "global.h"
 #include <avr/interrupt.h>
 #include "tagmanager.h"
-
-Rfid rfid;
-
-#define CNTREG TCNT2
-typedef uint8_t cnt_t;
+#include <string.h>
+#include <util/crc16.h>
 
 #define F_RFID 125000UL	//RFID carrier frequency
-#define TIMERPRESCALER 64 //just for checking if timerresolution in correct range
+#define CLOCKSPERBIT_EM4100 64
+#define CLOCKSPERBIT_FDXB 32
 
-#if F_CPU * 16UL / TIMERPRESCALER / F_RFID < 10
+#if F_CPU * 16UL / PRESCAL / F_RFID < 10
 	#error RFID: Timer too slow
 #endif
 
-#if F_CPU * 64UL / TIMERPRESCALER / F_RFID > 180
+#if F_CPU * 64UL / PRESCAL / F_RFID > 180
 	#error RFID: Timer too fast
 #endif
 
 /* some infos
-	EM4102 BITRATE = F_RFID / 64 =~ 1.953 kbits/s
-	EM4102 short pulse = 1 / BITRATE / 2 =~ 256 µS
-	EM4102 long pulse = 1 / BITRATE =~ 512 µS
+	64 clocks per bit:
+	BITRATE = F_RFID / 64 =~ 1.953 kbits/s
+	short pulse = 1 / BITRATE / 2 =~ 256 µS
+	long pulse = 1 / BITRATE =~ 512 µS
 	
-	FDX-B BITRATE = F_RFID / 32 =~ 3.906 kbits/s
-	FDX-B short pulse = 1 / BITRATE / 2 =~ 128 µS
+	32 clocks per bit (e.g. FDX-B)
+	BITRATE = F_RFID / 32 =~ 3.906 kbits/s
+	short pulse = 1 / BITRATE / 2 =~ 128 µS
+	long pulse = 1 / BITRATE =~ 256 µS
 */
 
-#define TIMER_PRESCALER 32 //Needed for manchester decoding
+#define MANCHESTER_MIDDLE(x) (uint8_t) (3 * x * F_CPU / F_RFID / PRESCAL / 4)
 
-#define MANCHESTER_LONG (F_CPU / F_RFID * 64 / TIMER_PRESCALER)
-#define MANCHESTER_SHORT (F_CPU / F_RFID * 64 / TIMER_PRESCALER / 2)
-#define MANCHESTER_MIDDLE ((uint8_t) ((MANCHESTER_LONG + MANCHESTER_SHORT) / 2))
-#define MANCHESTER_MIN ((uint8_t) (MANCHESTER_SHORT - 5))
-#define MANCHESTER_MAX ((uint8_t) (MANCHESTER_LONG + 5))
+volatile uint8_t Rfid::buffer[16];
+bool Rfid::em_flag;
+bool Rfid::fdx_flag;
 
-void Rfid::Init(void)
-{
+void Rfid::Init(void) {
 	#if defined(SHDDDR)
 	SHDDDR |= 1<<SHDPINX; //EM4095 shutdown pin
 	#endif
 	
-	TCCR0 = 1<<CS01 | 1<<CS00; //Timer/Counter0 prescaler 64
 	MCUCR |= 1<<ISC00; //Any logical change on INT0 generates an interrupt request
 	GICR |= 1<<INT0; //External interrupt request 0 enable (demod_out from RFID chip)
 }
 
-void Rfid::Execute(void)
-{
-	uint8_t ibit, obit, i, lp, p;
+void Rfid::Execute(void) {
+	static uint8_t state = 0;
 	
-	if (rawtag_flag)
+	if (em_flag)
 	{
-		//calc line parities
-		i=0;
-		p=0;
-		lp=0;
-		for (ibit=9; ibit<59; ibit++)
-		{
-			lp ^= (rawtag[ibit / 8] >> (7 - (ibit % 8))) & 0x01;
-			
-			i++;
-			if (i==5)
-			{
-				i=0;
-				p |= lp;
-			}
-		}
-			
-		//calc line parities
-		for (i=0; i<4; i++) //Check 4 columns
-		{
-			lp = 0;
-			for (ibit=9+i; ibit<9+55+i; ibit+=5)
-				lp ^= (rawtag[ibit / 8] >> (7 - (ibit % 8))) & 0x01;
-			p |= lp;
-		}
+		RSDIRPORT |= 1<<RSDIRPINX;
 		
-		//all parity bits ok ?
-		if (!p)
-		{
-			tag[0] = 0; tag[1] = 0; tag[2] = 0; tag[3] = 0; tag[4] = 0;
-			//Remove parity bits
-			ibit = 9;
-			for (obit=0; obit<40; obit++)
-			{
-				if ((rawtag[ibit / 8] >> (7 - (ibit % 8))) & 0x01)
-					tag[obit / 8] |= 1 << (7 - (obit % 8));
-				
-				ibit++;
-				if (((obit + 1) % 4) == 0)
-					ibit++;
-			}
-			
-			if (tag_flag == 0)
-				tag_flag = 1;
-
+		if (decodeEm4100()) {
 			timer.SetTime(200);
+			if (state == 0) {
+				state = 1;
+				currentTag = TAG_EM4100;
+			}
 		}
+		em_flag = false;
 		
-		rawtag_flag = 0;
-		GICR |= 1<<INT0;
 	}
+	
+	if (fdx_flag) {
+		if (decodeFDX()) {
+			timer.SetTime(200);
+			if (state == 0) {
+				state = 1;
+				currentTag = TAG_FDXB;
+			}
+		}
+		fdx_flag = false;
+	}
+	
+	GICR |= 1<<INT0; //External interrupt request 0 enable (demod_out from RFID chip)
 	
 	if (timer.IsFlagged())
-	{
-		tag_flag = 0;
+		state = 0;
+}
+
+enum tag_t Rfid::getTag(uint8_t *tag)
+{
+	switch (currentTag) {
+		case TAG_EM4100:
+			memcpy(tag, this->tagdata, 5);
+			tag[5] = 0x00;
+			break;
+		
+		case TAG_FDXB:
+			memcpy(tag, this->tagdata, 6);
+			break;
+			
+		default:
+			break;
 	}
 	
-	if (tag_flag == 1)
-	{
-		tag_flag = 2;
-		tagmanager.ProcessTag(tag);
-	}
+	enum tag_t res = currentTag;
+	currentTag = TAG_NONE;
+	return res;
 }
 
-void Rfid::InjectByte(uint8_t b)
-{
-	if (bytecnt < 8)
-	{
-		rawtag[bytecnt++] = b;
-		
-		if (bytecnt == 8)
-		{
-			GICR &= ~(1<<INT0);
-			rawtag_flag = 1;
-		}
-	}
-}
-
-void Rfid::TagStart(void) {
-	bytecnt = 0;
-}
-
-ISR(INT0_vect)
-{
-	cnt_t cnt = CNTREG;
-	static uint16_t timebase;
-	static uint8_t bitstate = 0;
-	static cnt_t old_cnt;
-	uint8_t diff = (cnt_t) (cnt - old_cnt);
+void Rfid::irq() {
+	rfidcnt_t cnt = RFIDCNTREG;
+	static rfidcnt_t old_cnt;
+	uint8_t diff = (rfidcnt_t) (cnt - old_cnt);
+	old_cnt = cnt;
+	static uint8_t bitstate;
+	static uint8_t bitcount;
+	static uint8_t thresh;
+	static uint8_t mode = 1; //1 = em4100, 2 = fdx_b
 	static uint16_t fifo;
 	static bool insync = false;
-	static uint8_t bitcount;
 	
-
-	if (diff > timebase) //this is a long pulse after a short pulse
+	if (diff > MANCHESTER_MIDDLE(CLOCKSPERBIT_EM4100))
+		if (mode != 1) {
+			thresh = MANCHESTER_MIDDLE(CLOCKSPERBIT_EM4100);
+			mode = 1;
+			insync = 0;
+			bitcount = 0;
+		}
+		
+	if (diff < MANCHESTER_MIDDLE(CLOCKSPERBIT_FDXB))
+		if (mode != 2) {
+			thresh = MANCHESTER_MIDDLE(CLOCKSPERBIT_FDXB);
+			mode = 2;
+			insync = 0;
+			bitcount = 0;
+		}
+	
+	if ((uint8_t)(diff) > thresh) 
 		bitstate = 0;
-	else
-		if (diff < (timebase / 2)) //this is a short pulse after a long pulse
+	else {
+		if (bitstate == 0)
 			bitstate = 1;
-		else //same pulse length (within 0.75x and < 1.5x of last length)
+		else
 			bitstate ^= 0x03;
-	
-	timebase = 3 * diff / 2;	
-	old_cnt = cnt;
+	}
 	
 	if (bitstate == 1)
 		return;
 		
-	
-	/*if ((uint8_t)(cnt - old_cnt) < MANCHESTER_MIDDLE)
-		return;
-	old_cnt = cnt;*/
-		
-
-
-
-	fifo <<= 1;
 	bitcount++;
+	
+	switch (mode) {
+	case 1: //EM4100
+		fifo <<= 1;
+		//manchester decoding
+		if (bit_is_clear(PIND, PD2)) {
+			fifo |= 1;
+		}
 		
-	//manchester
-	if (bit_is_clear(PIND, PD2))
-		fifo |= 1;
+		if (insync) {
+			if ((bitcount % 8) == 0)
+				buffer[bitcount / 8 - 1] = fifo;
+			
+			if (bitcount == 64) {
+				insync = 0;
+				GICR &= ~(1<<INT0);
+				em_flag = true;
+			}
+		}
+		else {
+			if ((fifo & 0x3FF) == 0x1FF) {
+				insync = true;
+				bitcount = 9;
+				buffer[0] = 0xFF;
+			}
+		}
+		break;
+	
+	case 2: //FDX-B
+		fifo >>= 1;
+		//biphase marc
+		if (!bitstate)
+			fifo |= 0x8000;
+			
+		if (insync) {
+			if ((bitcount % 8) == 0) {
+				buffer[bitcount / 8 - 1] = fifo >> 8;
+			}
+			
+			if (bitcount == 128) {
+				insync = 0;
+				GICR &= ~(1<<INT0);
+				fdx_flag = true;
+			}
+		}
+		else
+			if ((fifo & 0xFFE0) == 0x8000) {
+				insync = true;
+				bitcount = 11;
+				buffer[0] = 0x00;
+			}
+		break;
+	}
+		
+	/*if ((fifo & 0x3FF) == 0x1FF)
+		UDR = 0x77;*/
 	
 	/*
+	//FDX-B specific
+	fifo <<= 1;
 	//biphase marc
 	if (!bitstate)
-		fifo |= 1;*/
-		
+		fifo |= 1;
+	
 	if (insync) {
-		if ((bitcount % 8) == 0)
-			UDR = fifo;
+		if (bitcount % 8)
+		buffer[bitcount / 8] = fifo;
 		
-		if (bitcount == 64) {
+		if (bitcount == 128) {
 			insync = 0;
-			volatile int32_t d;
-			for (d=0; d<200000; d++);
+			GICR &= ~(1<<INT0);
+			rawtag_flag = true;
 		}
 	}
 	else
 	{
-		if ((fifo & 0x3FF) == 0x1FF) {
-			UDR = fifo >> 3;
+		if ((fifo & 0x3FF) == 0x001) {
 			insync = true;
 			bitcount = 11;
 		}
-	}
-		
-	return;
-	
-	/*static cnt_t old_cnt;
-	static uint16_t sync;
-	static uint8_t bitcount;
-	static uint8_t insync = 0;
-	
-	cnt_t diff = (uint8_t)(TCNT0 - old_cnt);
-	
-	
-	
-	//TEMP
-	old_cnt = TCNT0;
-	UDR = diff;
-	return;
-	
-	if ((diff > MANCHESTER_MAX) || (diff < MANCHESTER_MIN))
-	{
-		insync = 0;
-		bitcount = 0;
-		return;
-	}
-	
-	if (diff > MANCHESTER_MIDDLE)
-	{
-		old_cnt = TCNT0;
-	
-		sync <<= 1;
-		bitcount++;
-		
-		if (bit_is_clear(PIND, PD2))
-			sync |= 1;
-		
-		if (insync)
-		{
-			if ((bitcount % 8) == 0)
-				rfid.InjectByte(sync);
-			
-			if (bitcount == 64)
-				insync = 0;
-		}
-		else
-			if ((sync & 0x3FF) == 0x1FF)
-			{
-				insync = 1;
-				bitcount = 9;
-				rfid.TagStart();
-				rfid.InjectByte(sync);
-			}
 	}*/
+	
+	//EM4100 specific
+	
+	
+}
+
+//00 35 BF DD 85 6A D1 87 80 40 79 FD 58 04 02 01 = 900 96000130997
+
+bool Rfid::decodeEm4100() {
+	uint8_t ibit, obit, i, lp, p;
+	
+	//calc line parities
+	i=0;
+	p=0;
+	lp=0;
+	for (ibit=9; ibit<59; ibit++)
+	{
+		lp ^= (buffer[ibit / 8] >> (7 - (ibit % 8))) & 0x01;
+		
+		i++;
+		if (i==5)
+		{
+			i=0;
+			p |= lp;
+		}
+	}
+	
+	//calc line parities
+	for (i=0; i<4; i++) //Check 4 columns
+	{
+		lp = 0;
+		for (ibit=9+i; ibit<9+55+i; ibit+=5)
+		lp ^= (buffer[ibit / 8] >> (7 - (ibit % 8))) & 0x01;
+		p |= lp;
+	}
+	
+	//all parity bits ok ?
+	if (!p)
+	{
+		tagdata[0] = 0; tagdata[1] = 0; tagdata[2] = 0; tagdata[3] = 0; tagdata[4] = 0;
+		//Remove parity bits
+		ibit = 9;
+		for (obit=0; obit<40; obit++)
+		{
+			if ((buffer[ibit / 8] >> (7 - (ibit % 8))) & 0x01)
+			tagdata[obit / 8] |= 1 << (7 - (obit % 8));
+			
+			ibit++;
+			if (((obit + 1) % 4) == 0)
+			ibit++;
+		}
+		return true;
+	}
+	
+	return false;
+}
+
+bool Rfid::decodeFDX()
+{
+	/*
+	Example raw data:
+	LSB first!
+	Hex: 00 AC FD BB A1 56 8B E1 01 02 9E BF 1A 20 40 80 
+	     <-- 0 -> <-- 1 -> <-- 2 -> <-- 3 -> <-- 4 -> <-- 5 -> <-- 6 -> <-- 7 -> <-- 8 -> <-- 9 -> <- 10 -> <- 11 -> <- 12 -> <- 13 -> <- 14 -> <- 15 ->
+	Bin: 00000000 10101100 11111101 10111011 10100001 01010110 10001011 11100001 00000001 00000010 10011110 10111111 00011010 00100000 01000000 10000000
+	     HHHHHHHH AAAAAHHH BBBB1AAA CCC1BBBB DD1CCCCC E1DDDDDD 1FFEEEEE GGFFFFFF 000000H1 00000010 JJJJJ1I0 KKKK1JJJ LLL1KKKK MM1LLLLL N1MMMMMM 1NNNNNNN
+
+         1 = stuffing bits
+		 0 = always 0 bits
+		 H = Header,
+		 A..E = 38 bits national code
+		 F..G = 10 bits country code
+		 H = data block status flag
+		 I = animal application indicator flag
+		 J..K = 16 bits CCITT CRC (kermit) over previous 64 bit payload
+		 L..N = 24 bits extra data if bit H is set
+		 
+	Decoded national code:
+	Hex: 16     5A       0D       BF       B5   
+	Bin: 010110 01011010 00001101 10111111 10110101
+		 EEEEEE DDDDDDDD CCCCCCCC BBBBBBBB AAAAAAAA
+	Dec: 096000130997
+		 
+	Decoded country code:
+	Hex: 03  84
+	Bin: 11 10000100
+	     GG FFFFFFFF
+	Dec: 900
+	*/
+	
+	//collect national code
+	uint64_t wd = (buffer[1] & 0xF8) >> 3 | (buffer[2] & 0x07) << 5;
+	wd |= ((uint64_t) buffer[2] & 0xF0) << 4 | ((uint64_t) buffer[3] & 0x0F) << 12;
+	wd |= ((uint64_t) buffer[3] & 0xE0) << 11 | ((uint64_t) buffer[4] & 0x1F) << 19;
+	wd |= ((uint64_t) buffer[4] & 0xC0) << 18 | ((uint64_t) buffer[5] & 0x3F) << 26;
+	wd |= ((uint64_t) buffer[5] & 0x80) << 25 | ((uint64_t) buffer[6] & 0x1F) << 33;
+	
+	//collect 10 bit countrycode
+	wd |= ((uint64_t) buffer[6] & 0x60) << 33 | ((uint64_t) buffer[7]) << 40;
+	
+	//collect flags
+	wd |= ((uint64_t) buffer[8] & 0x02) << 47 | ((uint64_t) buffer[10] & 0x02) << 62;
+	
+	//collect CRC
+	uint16_t crc = ((uint16_t) buffer[10] & 0xF8) >> 3 | ((uint16_t) buffer[11] & 0x07) << 5;
+	crc |= ((uint16_t) buffer[11] & 0xF0) << 4 | ((uint16_t) buffer[12] & 0x0F) << 12;
+	
+	uint16_t calccrc = 0;
+	for (int i=0; i<8; i++)
+		calccrc = _crc_ccitt_update(calccrc, (wd >> (i * 8)) & 0xFF);
+		
+	if (calccrc == crc) {
+		for (uint8_t i=0; i<6; i++)
+			tagdata[i] = (wd >> (i * 8)) & 0xFF;
+		
+		return true;
+	}
+
+	return false;
 }
 

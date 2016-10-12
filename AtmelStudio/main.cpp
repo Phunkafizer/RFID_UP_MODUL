@@ -15,8 +15,7 @@ DESCRIPTION:  Some hardware initialization and main loop
 #include "tagmanager.h"
 #include "global.h"
 
-#include "timedtask.h"
-#include "led.h"
+#include "uart.h"
 
 FUSES =
 {
@@ -24,44 +23,10 @@ FUSES =
 	(FUSE_SPIEN & FUSE_EESAVE & FUSE_BOOTSZ1 & FUSE_BOOTSZ0) // .high
 };
 
-class TaskA: public TimedTask {
-	bool state;
-protected:
-	void onTask() {
-		if (state) {
-			LEDRED;
-		}
-		else {
-			LEDGREEN;
-		}
-			
-		state = !state;
-	};
-public:
-	TaskA(): TimedTask(300) {};
-};
-TaskA taska;
-
-class TaskB: public TimedTask {
-	bool state;
-protected:
-	void onTask() {
-		if (state)
-			PORTC |= 1<<PC0;
-		else
-			PORTC &= ~(1<<PC0);
-		state = !state;
-	}
-public:
-	TaskB(): TimedTask(2000) {};
-};
-//TaskB taskb;
-
-
-
-
 int main(void)
 {
+	Rfid rfid;
+
 	RELAISDDR |= 1<<RELAISPINX;
 	
 	#ifdef LEDADDR
@@ -75,9 +40,6 @@ int main(void)
 	
 	PORTB |= 1<<PB3; //enable pull up PB3 (MOSI) for jumper
 	
-	RSDIRPORT |= 1<<RSDIRPINX;
-	DDRD |= 1<<PD4 | 1<<PD3;
-	
 	sei();
 	
 	tagmanager.Init();
@@ -86,5 +48,11 @@ int main(void)
 	while (1)
 	{
 		Task::run();
+		
+		tag_item_t tag;
+		
+		tag.tagtype = rfid.getTag(tag.data);
+		if (tag.tagtype != TAG_NONE)
+			tagmanager.ProcessTag(&tag);
 	}
 }

@@ -1,8 +1,8 @@
-#ifndef eeprom_h
-#define eeprom_h
+#ifndef config_h
+#define config_h
 
-#define HWADDRESS 0x0070
-#define MODE MODE_BUS
+#define HWADDRESS 0x0005
+#define MODE MODE_BUTTONADD
 
 #include <avr/eeprom.h>
 

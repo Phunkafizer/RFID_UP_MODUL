@@ -13,25 +13,34 @@ DESCRIPTION: Declaration of rfid class
 #include "timer.h"
 #include "task.h"
 
-class Rfid: public Task
-{
-	private:
-		uint8_t rawtag[8];
-		uint8_t tag[5];
-		uint8_t lasttag[5];
-		uint8_t bytecnt;
-		Timer timer;
-		uint8_t rawtag_flag;
-		uint8_t tag_flag;
-	protected:
-	public:
-		void InjectByte(uint8_t b);
-		void Init(void);
-		void TagStart(void);
-		void Execute(void);
-		void GetTag(uint8_t *tag);
+#define RFIDCNTREG TCNT2
+typedef uint8_t rfidcnt_t;
+
+enum tag_t {TAG_NONE = 0, TAG_EM4100 = 1, TAG_FDXB = 2};
+
+#define STR(x) #x
+#define HLPSTR(x) STR(x)
+
+class Rfid: public Task {
+private:
+	Timer timer;
+	uint8_t tagdata[6];
+	enum tag_t currentTag;
+	bool decodeEm4100();
+	bool decodeFDX();
+	static bool em_flag;
+	static bool fdx_flag;
+	static void irq() __asm__(HLPSTR(INT0_vect)) __attribute__((__signal__, __used__, __externally_visible__));
+protected:
+	volatile static uint8_t buffer[16];
+public:
+	void Init(void);
+	void TagStart(void);
+	void Execute(void);
+	enum tag_t getTag(uint8_t *tag);
 };
 
-extern Rfid rfid;
+#undef STR
+#undef HLPSTR
 
 #endif

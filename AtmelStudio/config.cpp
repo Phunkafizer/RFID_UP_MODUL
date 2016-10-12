@@ -1,4 +1,4 @@
-#include "eeprom.h"
+#include "config.h"
 
 eeconfig_t eeconfig EEMEM = {
 

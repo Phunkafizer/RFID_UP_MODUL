@@ -14,7 +14,7 @@ DESCRIPTION: Implementation of Bus class (RS485 communication)
 #include <avr/interrupt.h>
 #include <stdio.h>
 #include <string.h>
-#include "eeprom.h"
+#include "config.h"
 #include <stdlib.h>
 #include <util/crc16.h>
 #include "relay.h"
@@ -119,13 +119,13 @@ void Bus::Execute(void)
 					data[0] = CMD_READ_TAG_REP;
 					data[1] = rxdata[0];
 					data[2] = rxdata[1];
-					tagmanager.ReadTag((rxdata[0]) | rxdata[1] << 8, &data[3]);
+					//tagmanager.ReadTag((rxdata[0]) | rxdata[1] << 8, &data[3]);
 															
 					BuildL1Frame(data, 8, true);
 					break;
 					
 				case CMD_WRITE_TAG:
-					tagmanager.WriteTag(&rxdata[2], *((uint16_t*) rxdata));
+					//tagmanager.WriteTag(&rxdata[2], *((uint16_t*) rxdata));
 					BuildL1Frame(0, 0, true);
 					break;
 			}

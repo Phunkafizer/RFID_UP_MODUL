@@ -183,7 +183,7 @@ void Uart::CmdReadTag(void)
 	
 	i = rxbuf[5] | (uint16_t) rxbuf[6] << 8;
 	
-	tagmanager.ReadTag(i, (uint8_t *) &rxbuf[7]);
+	//tagmanager.ReadTag(i, (uint8_t *) &rxbuf[7]);
 	
 	rxbufpointer += 5;
 	
@@ -197,7 +197,7 @@ void Uart::CmdWriteTag(void)
 	if (rxbufpointer !=12)
 		return;
 		
-	result = tagmanager.WriteTag((uint8_t *) &rxbuf[5], rxbuf[10] | (uint16_t) rxbuf[11]);
+	//result = tagmanager.WriteTag((uint8_t *) &rxbuf[5], rxbuf[10] | (uint16_t) rxbuf[11]);
 	
 	rxbuf[12] = result;
 	rxbufpointer += 1;

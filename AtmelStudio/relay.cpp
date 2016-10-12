@@ -1,7 +1,7 @@
 #include "relay.h"
 #include "led.h"
 #include "global.h"
-#include "eeprom.h"
+#include "config.h"
 
 Relay relay;
 

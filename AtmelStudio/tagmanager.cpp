@@ -13,10 +13,9 @@ DESCRIPTION: Implementation of tagmanager class
 #include "led.h"
 #include <avr/interrupt.h>
 #include "bus.h"
-#include "eeprom.h"
+#include "config.h"
 #include "button.h"
 #include "relay.h"
-
 #include "i2ceeprom.h"
 #include <avr/eeprom.h>
 
@@ -34,9 +33,9 @@ Tagmanager::Tagmanager(void)
 	useexteeprom = i2ceeprom.Test();
 	
 	if (useexteeprom)
-		maxnumtags = I2CEEPROM_SIZE * 128UL / 5;
+		maxnumtags = I2CEEPROM_SIZE * 128UL / sizeof(tag_item_t);
 	else
-		maxnumtags = ((E2END + 1 - INT_EEPROM_RESERVED) / 5);
+		maxnumtags = ((E2END + 1 - INT_EEPROM_RESERVED) / sizeof(tag_item_t));
 	
 	OCR1A = F_CPU / SEC_TIMER_DIV - 1;
 	TIMSK |= 1<<OCIE1A;
@@ -47,12 +46,12 @@ void Tagmanager::Init(void)
 {
 	numtags = 0;
 	
-	uint8_t tag[5];
+	tag_item_t tag;
 	
 	while (true)
 	{
-		ReadTag(numtags, tag);
-		if (memcmp(tag, empty_tag, 5) == 0)
+		ReadTag(numtags, &tag);
+		if ((uint8_t) tag.tagtype == 0xFF)
 			break;
 		numtags++;
 	}
@@ -61,16 +60,16 @@ void Tagmanager::Init(void)
 
 void Tagmanager::Execute(void)
 {
-	uint8_t temp[5];
+	tag_item_t temp;
 	
 	switch (mode)
 	{
 		case TMM_LOOKUP:	
-			ReadTag(eeprom_ptr / 5, temp);
+			ReadTag(eepromIdx, &temp);
 						
-			if (memcmp(temp, tag, 5) == 0)
+			if (memcmp(&temp, &tag, sizeof(tag_item_t)) == 0)
 			{//Tag found on local mem
-				if ((eeprom_ptr == 0) && (eeprom_read_byte(&eeconfig.modulemode) == MODE_ADMINTAG))
+				if ((eepromIdx == 0) && (eeprom_read_byte(&eeconfig.modulemode) == MODE_ADMINTAG))
 					EnterAdminTagMode();
 				else
 				{//Tag found
@@ -78,19 +77,18 @@ void Tagmanager::Execute(void)
 					relay.Trigger();
 					admintag = false;
 					button.ResetProgMode();
-					bus.SendTagRequest(tag, true);
+					//bus.SendTagRequest(tag, true);
 				}
 			}
 			else
-				if (memcmp(temp, empty_tag, 5) == 0)
+				if ((uint8_t) temp.tagtype == 0xFF)
 				{//eeprom tag is empty, we are at the end of eeprom-tags, tag was not found
 					mode = TMM_IDLE;
 					led.SetState(STATE_IDLE);	
 					uint8_t accessed = false;
 					uint8_t modulemode = eeprom_read_byte(&eeconfig.modulemode);
 					
-					
-					if ((eeprom_ptr == 0) && (modulemode != MODE_BUS) && (button.IsProgMode() == false))
+					if ((eepromIdx == 0) && (modulemode != MODE_BUS) && (button.IsProgMode() == false))
 					{//when no tag is in memory, access (e.g. for checking a new module)
 						accessed = true;
 					}
@@ -100,7 +98,7 @@ void Tagmanager::Execute(void)
 							case MODE_BUTTONADD:
 								if (button.IsProgMode())
 								{
-									WriteTag(tag, eeprom_ptr / 5);
+									WriteTag(&tag, eepromIdx);
 									accessed = true;
 								}
 								else
@@ -111,14 +109,12 @@ void Tagmanager::Execute(void)
 							
 							case MODE_ADMINTAG:
 								if (button.IsProgMode())
-								{
-									WriteTag(tag, 0);
-								}
+									WriteTag(&tag, 0);
 								else
 								{
 									if (admintag)
 									{
-										WriteTag(tag, eeprom_ptr / 5);
+										WriteTag(&tag, eepromIdx);
 										accessed = true;
 									}
 									else
@@ -135,10 +131,10 @@ void Tagmanager::Execute(void)
 					else
 						led.SetState(STATE_DENY);
 					
-					bus.SendTagRequest(tag, accessed);
+					//bus.SendTagRequest(tag, accessed);
 				}
 				else
-					eeprom_ptr += 5;
+					eepromIdx++;
 			break;
 
 			
@@ -162,37 +158,35 @@ void Tagmanager::EnterAdminTagMode(void)
 	led.SetState(STATE_ADDTAG);
 }
 
-void Tagmanager::ProcessTag(uint8_t *tag)
+void Tagmanager::ProcessTag(tag_item_t *tag)
 {
 	if (mode == TMM_IDLE)
 	{
-		eeprom_ptr = 0;
-		memcpy(this->tag, tag, 5);
-		//uart.SendData(tag, 5);
+		eepromIdx = 0;
+		memcpy(&this->tag, tag, sizeof(tag_item_t));
 		mode = TMM_LOOKUP;
 	}
 }
 
-void Tagmanager::ReadTag(uint16_t i, uint8_t *tag)
+void Tagmanager::ReadTag(uint16_t i, tag_item_t *tag)
 {
-	uint16_t adr = i * 5;
+	uint16_t adr = i * sizeof(tag_item_t);
 	
-	if (i >= MAX_NUM_TAGS)
-		memcpy(tag, empty_tag, 5);
+	if (i >= maxnumtags)
+		tag->tagtype = TAG_NONE;
 	else
-		
-	if (useexteeprom)
-		i2ceeprom.ReadBuf(tag, adr, 5);
-	else
-		eeprom_read_block(tag, (uint8_t *) adr + INT_EEPROM_RESERVED, 5);
+		if (useexteeprom)
+			i2ceeprom.ReadBuf((uint8_t *) tag, adr, sizeof(tag_item_t));
+		else
+			eeprom_read_block(tag, (uint8_t *) adr + INT_EEPROM_RESERVED, sizeof(tag_item_t));
 }
 
-uint16_t Tagmanager::AddTag(uint8_t *tag)
+/*uint16_t Tagmanager::AddTag(uint8_t *tag)
 {	
 	uint16_t i;
 	uint8_t temp[5];
 	
-	for (i=0; i<MAX_NUM_TAGS; i++)
+	for (i=0; i<maxnumtags; i++)
 	{
 		ReadTag(i, temp);
 				
@@ -212,18 +206,18 @@ uint16_t Tagmanager::AddTag(uint8_t *tag)
 		return i;
 	
 	return 0xFFFF;
-}
+}*/
 
-uint8_t Tagmanager::WriteTag(uint8_t *tag, uint16_t id)
+uint8_t Tagmanager::WriteTag(tag_item_t *tag, uint16_t idx)
 {
-	uint16_t adr = id * 5;
+	uint16_t adr = idx * sizeof(tag_item_t);
 	
-	if (id < MAX_NUM_TAGS)
+	if (idx < maxnumtags)
 	{
 		if (useexteeprom)
-			i2ceeprom.WriteBuf(tag, adr, 5);
+			i2ceeprom.WriteBuf((uint8_t *) tag, adr, sizeof(tag_item_t));
 		else
-			eeprom_write_block(tag, (uint8_t *) adr + INT_EEPROM_RESERVED, 5);
+			eeprom_write_block(tag, (uint8_t *) adr + INT_EEPROM_RESERVED, sizeof(tag_item_t));
 		return 1;
 	}
 	
@@ -242,12 +236,12 @@ void Tagmanager::DenyAccess(void)
 	led.SetState(STATE_DENY);
 }
 
-void Tagmanager::AddCurrentTag(void)
+/*void Tagmanager::AddCurrentTag(void)
 {
 	mode = TMM_IDLE;
 	led.SetState(STATE_ACCESS);
-	WriteTag(tag, eeprom_ptr / 5);
-}
+	WriteTag(tag, eepromIdx);
+}*/
 
 ISR (TIMER1_COMPA_vect)
 {

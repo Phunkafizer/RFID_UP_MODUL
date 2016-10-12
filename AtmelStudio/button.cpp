@@ -12,7 +12,7 @@ DESCRIPTION: Implementation of Button class
 #include "button.h"
 #include "global.h"
 #include "led.h"
-#include "eeprom.h"
+#include "config.h"
 #include "i2ceeprom.h"
 
 #include "bus.h"

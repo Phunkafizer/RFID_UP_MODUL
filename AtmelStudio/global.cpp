@@ -9,8 +9,6 @@ DESCRIPTION: Some C++ tools
 
 #include "global.h"
 
-const uint8_t empty_tag[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
 bool useexteeprom;
 
 extern "C"

@@ -9,7 +9,6 @@ DESCRIPTION: Implementation of Bus class (RS485 communication)
 
 #include "bus.h"
 #include "global.h"
-#include "uart.h"
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <stdio.h>
@@ -19,26 +18,51 @@ DESCRIPTION: Implementation of Bus class (RS485 communication)
 #include <util/crc16.h>
 #include "relay.h"
 #include "tagmanager.h"
+#include "button.h"
 
 #define SLOT_TIME 10
 #define SIFS 20
 #define DIFS 150
 
-typedef struct 
+#define BAUD 9600UL
+
+#define UBRR_VAL ((F_CPU+BAUD*8)/(BAUD*16)-1)
+#define BAUD_REAL (F_CPU/(16*(UBRR_VAL+1)))
+#define BAUD_ERROR ((BAUD_REAL*1000)/BAUD)
+#if ((BAUD_ERROR<990) || (BAUD_ERROR>1010))
+#error Baudrate error > 1%!
+#endif
+
+Bus bus;
+
+static volatile uint8_t rxbuf[30];
+static volatile uint8_t rxlen;
+static volatile bool rxflag;
+static volatile bool rxbusy;
+static volatile uint8_t txbuf[30];
+static volatile uint8_t txbufpointer;
+static volatile uint8_t txlen;
+static volatile bool txbusy = false; //true while sending
+static Timer rxbusytimer;
+
+typedef struct
 {
 	uint16_t destadr;
 	uint16_t srcadr;
 	uint8_t frameid;
 	bool ack;
-	
 } frameheader_t;
-
-Bus bus;
 
 Bus::Bus(void)
 {
+	UCSRB = 1<<RXCIE | 1<<TXCIE | 1<<TXEN | 1<<RXEN;
+	UCSRC = 1<<URSEL | 1<<UCSZ1 | 1<<UCSZ0;
+	UBRRH = UBRR_VAL >> 8;
+	UBRRL = UBRR_VAL & 0xFF;
+	rxbusy = false;
 	hostid = eeprom_read_word(&eeconfig.hostadr);
-	lasttxframeid = lastrxframeid = 0x0000;
+	lasttxframeid = 0x00;
+	lastrxframeid = 0x00;
 	srand(hostid);
 	tx_left = 0;
 	l1_txbuf[l1_txbuflen++] = ESC;
@@ -46,11 +70,9 @@ Bus::Bus(void)
 	txpending = false;
 }
 
-#include "led.h"
-
 void Bus::InitSifsTimer(void)
 {
-	if ((!uart.MediaBusy()) && (tx_left > 0))
+	if ((!MediaBusy()) && (tx_left > 0))
 		sifstimer.SetTime(DIFS);//sifstimer.SetTime(((rand() % 10)) * SLOT_TIME + DIFS);
 	else
 		sifstimer.SetTime(0);
@@ -59,11 +81,10 @@ void Bus::InitSifsTimer(void)
 void Bus::Execute(void)
 {
 	static bool old_busy = false;
-	if (old_busy != uart.MediaBusy())
+	bool busy = MediaBusy();
+	if (old_busy != busy)
 	{
-		old_busy = uart.MediaBusy();
-		//if (!old_busy)
-			//LEDOFF;
+		old_busy = busy;
 			
 		if (!lastL1ack)
 			InitSifsTimer();
@@ -75,69 +96,106 @@ void Bus::Execute(void)
 	{
 		if (sifstimer.IsFlagged())
 		{
-			//LEDRED;
-			uart.SendData(l1_txbuf, l1_txbuflen);
+			SendData(l1_txbuf, l1_txbuflen);
 			tx_left--;
 		}
 	}
 	
-	uint8_t* rxdata;
-	frameheader_t *rxhead;
-	uint8_t rxlen;
+	if (rxbusytimer.IsFlagged())
+		rxbusy = false;
 	
-	if ((rxlen = uart.GetRxData((uint8_t**) &rxhead)))
+	if (rxflag)
 	{
-		if (rxhead->destadr != hostid)
+		rxflag = false;
+		
+		if (rxlen < 3)
 			return;
-			
-		if (rxhead->ack)
-		{
-			tx_left = 0;
-			txpending = false;
-		}
-		else
+		
+		//CheckCRC
+		uint16_t crc = 0xFFFF;
+		uint8_t i;
+		for (i=0; i<rxlen; i++)
+			crc = _crc_ccitt_update(crc, rxbuf[i]);
+		
+		if (crc != 0)
+			return;
+
+		rxlen -= 2; //substract crc
+		
+		uint8_t* rxdata;
+		frameheader_t *rxhead;
+		rxhead = (frameheader_t *) rxbuf;
+		
+		if (rxhead->destadr == hostid) {
+			if (rxhead->ack)
+			{
+				tx_left = 0;
+				txpending = false;
+			}
+			else
 			tx_left = 1; //Force to send 1 ack frame
 		
-		if (rxhead->frameid != lastrxframeid)
-		{
-			
-			lastrxframeid = rxhead->frameid;
-			if (rxlen - sizeof(frameheader_t) == 0)
-				return;
-				
-			rxdata = (uint8_t*) rxhead + sizeof(frameheader_t);
-			
-			switch (*rxdata++)
+			if (rxhead->frameid != lastrxframeid)
 			{
-				case CMD_OPEN_RELAY:
-					BuildL1Frame(0, 0, true); //Send back ACK frame 
-					relay.TriggerTime(*((uint16_t*) rxdata));
-					break;
-					
-				case CMD_READ_TAG:
-					uint8_t data[8];
-					data[0] = CMD_READ_TAG_REP;
-					data[1] = rxdata[0];
-					data[2] = rxdata[1];
-					//tagmanager.ReadTag((rxdata[0]) | rxdata[1] << 8, &data[3]);
-															
-					BuildL1Frame(data, 8, true);
-					break;
-					
-				case CMD_WRITE_TAG:
-					//tagmanager.WriteTag(&rxdata[2], *((uint16_t*) rxdata));
-					BuildL1Frame(0, 0, true);
-					break;
+				lastrxframeid = rxhead->frameid;
+				if (rxlen - sizeof(frameheader_t) == 0)
+				return;
+			
+				rxdata = (uint8_t*) rxhead + sizeof(frameheader_t);
+				tag_item_t tag;
+
+				switch (*rxdata++) {
+					case CMD_SET_ADDRESS:
+						if (button.IsProgMode())
+							eeprom_write_word(&eeconfig.hostadr, rxdata[0] | (uint16_t) rxdata[1] << 8);
+						BuildL1Frame(0, 0, true); //Send back ACK frame
+						break;
+				
+					case CMD_SET_PULSE_LEN:
+						eeprom_write_byte(&eeconfig.triggertime, rxdata[0]);
+						BuildL1Frame(0, 0, true); //Send back ACK frame
+						break;
+				
+					case CMD_OPEN_RELAY:
+						relay.TriggerTime(rxdata[0]);
+						BuildL1Frame(0, 0, true); //Send back ACK frame
+						break;
+				
+					case CMD_READ_TAG: {
+						uint8_t rep[1 + 2 + sizeof(tag_item_t)];
+						rep[0] = CMD_READ_TAG_REP;
+						rep[1] = rxdata[0];
+						rep[2] = rxdata[1];
+						tagmanager.ReadTag(rxdata[0] | rxdata[1] << 8, &tag);
+						memcpy(&rep[3], &tag, sizeof(tag_item_t));
+						BuildL1Frame(rep, sizeof(rep), true);
+						break;
+					}
+				
+					case CMD_WRITE_TAG: {
+						uint8_t rep[2];
+						memcpy(&tag, &rxdata[2], sizeof(tag_item_t));
+						uint16_t idx = tagmanager.WriteTag(&tag, rxdata[0] | rxdata[1] << 8);
+						rep[0] = idx & 0xFF;
+						rep[1] = idx << 8;
+						BuildL1Frame(rep, sizeof(rep), true);
+						break;
+					}
+				
+					case CMD_ADD_TAG:
+						memcpy(&tag, &rxdata[0], sizeof(tag_item_t));
+						tagmanager.AddTag(&tag);
+						BuildL1Frame(0, 0, true);
+						break;
+				}
+			}
+			else
+			{
+				//Frame already received, just send last txframe again
+				if (tx_left > 0)
+				StartL1TX();
 			}
 		}
-		else
-		{
-			//Frame already received, just send last txframe again
-			if (tx_left > 0)
-				StartL1TX();
-			
-		}
-		
 	}
 }
 
@@ -154,8 +212,7 @@ void Bus::AddL1Data(uint8_t *data, uint8_t len, uint16_t *crc)
 	}
 }
 
-void Bus::BuildL1Frame(uint8_t *data, uint8_t len, bool ack)
-{
+void Bus::BuildL1Frame(uint8_t *data, uint8_t len, bool ack) {
 	if ((tx_left > 0) && (!ack))
 		return;
 	
@@ -165,7 +222,13 @@ void Bus::BuildL1Frame(uint8_t *data, uint8_t len, bool ack)
 	
 	head.destadr = 0x00;
 	head.srcadr = hostid;
-	head.frameid = ++lasttxframeid;
+	if (ack)
+		head.frameid = lasttxframeid;
+	else {
+		lasttxframeid++;
+		head.frameid = lasttxframeid;	
+	}
+
 	head.ack = ack;
 	
 	l1_txbuflen = 2;
@@ -194,17 +257,32 @@ void Bus::StartL1TX(void)
 	}
 }
 
-void Bus::SendTagRequest(uint8_t *tag, bool accessed)
+void Bus::SendData(uint8_t *data, uint8_t len)
 {
-	uint8_t data[7];
+	memcpy((uint8_t*) txbuf, data, len);
+	txbufpointer = 0;
+	txlen = len;
+	RSDIRPORT |= 1<<RSDIRPINX;
+	UCSRB |= 1<<UDRIE;
+}
+
+bool Bus::MediaBusy()
+{
+	return (rxbusy) || (bit_is_set(UCSRB, UDRIE));
+}
+
+void Bus::SendTagRequest(tag_item_t *tag, bool accessed)
+{
+	uint8_t data[1 + sizeof(tag_item_t) + 1]; //CMD, struct, accessed
 	data[0] = CMD_TAG_REQUEST;
-	memcpy(&data[1], tag, 5);
-	data[6] = accessed;
-	BuildL1Frame(data, 7, false);
+	memcpy(&data[1], tag, sizeof(tag_item_t));
+	data[1 + sizeof(tag_item_t)] = accessed;
+	BuildL1Frame(data, 1 + sizeof(tag_item_t) + 1, false);
 }
 
 void Bus::SendIOEvent(uint8_t event)
 {
+	return;
 	//event: 0 = HW V3 Pinheader shortend
 	
 	uint8_t data[2];
@@ -213,3 +291,46 @@ void Bus::SendIOEvent(uint8_t event)
 	BuildL1Frame(data, sizeof(data), false);
 }
 
+ISR (USART_TXC_vect) {
+	RSDIRPORT &= ~(1<<RSDIRPINX);
+}
+
+ISR (USART_UDRE_vect) {
+	UDR = txbuf[txbufpointer++];
+	if (txbufpointer == txlen)
+		UCSRB &= ~(1<<UDRIE);
+}
+
+ISR (USART_RXC_vect) {
+	register char c;
+	static bool esc_mode = false;
+	c = UDR;
+
+	rxbusytimer.SetTime(5);
+	rxbusy = true;
+	
+	if (esc_mode)
+	{
+		esc_mode = false;
+		switch (c)
+		{
+			case STX:
+				rxlen = 0;
+				break;
+			case ETX:
+				rxflag = true;
+				break;
+			case ESC_ESC:
+				rxbuf[rxlen++] = 27;
+				break;
+		}
+	}
+	else
+		if (c == 27)
+			esc_mode = true;
+		else
+			rxbuf[rxlen++] = c;
+	
+	if (rxlen >= sizeof(rxbuf))
+		rxlen = 0;
+}

@@ -15,8 +15,6 @@ DESCRIPTION:  Some hardware initialization and main loop
 #include "tagmanager.h"
 #include "global.h"
 
-#include "uart.h"
-
 FUSES =
 {
 	(FUSE_BODEN & FUSE_CKSEL1), //.low
@@ -28,6 +26,7 @@ int main(void)
 	Rfid rfid;
 
 	RELAISDDR |= 1<<RELAISPINX;
+	RSDIRDDR |= 1<<RSDIRPINX;
 	
 	#ifdef LEDADDR
 	LEDADDR |= 1<<LEDAPINX;
@@ -48,9 +47,8 @@ int main(void)
 	while (1)
 	{
 		Task::run();
-		
+
 		tag_item_t tag;
-		
 		tag.tagtype = rfid.getTag(tag.data);
 		if (tag.tagtype != TAG_NONE)
 			tagmanager.ProcessTag(&tag);

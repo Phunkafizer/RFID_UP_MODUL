@@ -12,12 +12,16 @@ DESCRIPTION: Declaration of Bus class (RS485 communication)
 
 #include "task.h"
 #include "timer.h"
+#include "tagmanager.h"
 
+#define CMD_SET_ADDRESS 0x03
+#define CMD_SET_PULSE_LEN 0x04
 #define CMD_OPEN_RELAY 0x10
 #define CMD_TAG_REQUEST 0x20
 #define CMD_READ_TAG 0x30
 #define CMD_READ_TAG_REP 0x31
 #define CMD_WRITE_TAG 0x40
+#define CMD_ADD_TAG 0x48
 #define CMD_IO_EVENT 0x50
 
 class Bus: public Task
@@ -38,11 +42,13 @@ class Bus: public Task
 		uint16_t CalcCrc(uint8_t data, uint8_t len);
 		void AddL1Data(uint8_t *data, uint8_t len, uint16_t *crc);
 		void StartL1TX(void);
+		void SendData(uint8_t *data, uint8_t len);
+		bool MediaBusy();
 	protected:
 		void Execute(void);
 	public:
 		Bus(void);
-		void SendTagRequest(uint8_t *tag, bool accessed);
+		void SendTagRequest(tag_item_t *tag, bool accessed);
 		void SendEmptyAck(void);
 		void SendIOEvent(uint8_t event);
 };

@@ -7,10 +7,13 @@ Project("{E66E83B9-2572-4076-B26E-6BE79FF3018A}") = "rfid_up_module", "rfid_up_m
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		HW1|AVR = HW1|AVR
 		HW2|AVR = HW2|AVR
 		HW3|AVR = HW3|AVR
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DCE6C7E3-EE26-4D79-826B-08594B9AD897}.HW1|AVR.ActiveCfg = HW1|AVR
+		{DCE6C7E3-EE26-4D79-826B-08594B9AD897}.HW1|AVR.Build.0 = HW1|AVR
 		{DCE6C7E3-EE26-4D79-826B-08594B9AD897}.HW2|AVR.ActiveCfg = HW2|AVR
 		{DCE6C7E3-EE26-4D79-826B-08594B9AD897}.HW2|AVR.Build.0 = HW2|AVR
 		{DCE6C7E3-EE26-4D79-826B-08594B9AD897}.HW3|AVR.ActiveCfg = HW3|AVR

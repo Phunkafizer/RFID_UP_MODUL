@@ -1,8 +1,8 @@
 #ifndef config_h
 #define config_h
 
-#define HWADDRESS 0x0005
-#define MODE MODE_BUTTONADD
+#define HWADDRESS 0xFFFF
+#define MODE MODE_ADMINTAG
 
 #include <avr/eeprom.h>
 
@@ -19,7 +19,7 @@ typedef struct
 #define MODE_BUS		0x01
 
 #define RELAY_FLAG_POLARITY			0	//1: normal, 0: inverted
-#define RELAY_FLAG_RETRIGGERABLE	1	//1: not retriggerable, o: retriggerable
+#define RELAY_FLAG_NOT_RETRIGGERABLE	1	//1: not retriggerable, o: retriggerable
 
 #define INT_EEPROM_RESERVED	16 //Number of bytes reserved at the end of int eeprom
 

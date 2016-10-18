@@ -16,7 +16,7 @@ DESCRIPTION: Declaration of rfid class
 #define RFIDCNTREG TCNT2
 typedef uint8_t rfidcnt_t;
 
-enum tag_t {TAG_NONE = 0, TAG_EM4100 = 1, TAG_FDXB = 2};
+enum tag_t {TAG_EM4100 = 1, TAG_FDXB = 2, TAG_NONE = 0xFF};
 
 #define STR(x) #x
 #define HLPSTR(x) STR(x)
@@ -34,6 +34,7 @@ private:
 protected:
 	volatile static uint8_t buffer[16];
 public:
+	Rfid();
 	void Init(void);
 	void TagStart(void);
 	void Execute(void);

@@ -3,7 +3,7 @@
 	rfid class for decoding EM4102 & FDX-B transponder
 	S. Seegel, post@seegel-systeme.de
 	feb 2011
-	last update apr 2016
+	last update okt 2016
 	http://opensource.org/licenses/gpl-license.php GNU Public License
 */
 
@@ -44,6 +44,10 @@ volatile uint8_t Rfid::buffer[16];
 bool Rfid::em_flag;
 bool Rfid::fdx_flag;
 
+Rfid::Rfid() {
+	currentTag = TAG_NONE;
+}
+
 void Rfid::Init(void) {
 	#if defined(SHDDDR)
 	SHDDDR |= 1<<SHDPINX; //EM4095 shutdown pin
@@ -58,8 +62,6 @@ void Rfid::Execute(void) {
 	
 	if (em_flag)
 	{
-		RSDIRPORT |= 1<<RSDIRPINX;
-		
 		if (decodeEm4100()) {
 			timer.SetTime(200);
 			if (state == 0) {
@@ -68,7 +70,6 @@ void Rfid::Execute(void) {
 			}
 		}
 		em_flag = false;
-		
 	}
 	
 	if (fdx_flag) {
@@ -203,41 +204,7 @@ void Rfid::irq() {
 			}
 		break;
 	}
-		
-	/*if ((fifo & 0x3FF) == 0x1FF)
-		UDR = 0x77;*/
-	
-	/*
-	//FDX-B specific
-	fifo <<= 1;
-	//biphase marc
-	if (!bitstate)
-		fifo |= 1;
-	
-	if (insync) {
-		if (bitcount % 8)
-		buffer[bitcount / 8] = fifo;
-		
-		if (bitcount == 128) {
-			insync = 0;
-			GICR &= ~(1<<INT0);
-			rawtag_flag = true;
-		}
-	}
-	else
-	{
-		if ((fifo & 0x3FF) == 0x001) {
-			insync = true;
-			bitcount = 11;
-		}
-	}*/
-	
-	//EM4100 specific
-	
-	
 }
-
-//00 35 BF DD 85 6A D1 87 80 40 79 FD 58 04 02 01 = 900 96000130997
 
 bool Rfid::decodeEm4100() {
 	uint8_t ibit, obit, i, lp, p;

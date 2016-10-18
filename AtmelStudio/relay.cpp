@@ -21,11 +21,10 @@ void Relay::Trigger(void)
 	temp = eeprom_read_byte(&eeconfig.triggertime);
 	relayflags = eeprom_read_byte(&eeconfig.relay_flags);
 	
-	
 	if (temp == 0xFF)
 		triggertime = 1000;
 	else
-		triggertime = temp * 100;
+		triggertime = temp * 100UL;
 	
 	led.SetState(STATE_ACCESS);
 	
@@ -36,7 +35,7 @@ void Relay::Trigger(void)
 	}
 	else
 	{
-		if ((!triggered) || (relayflags & 1<<RELAY_FLAG_RETRIGGERABLE) == 0)
+		if ((!triggered) || (relayflags & 1<<RELAY_FLAG_NOT_RETRIGGERABLE) == 0)
 		{
 			triggered = true;
 			timer.SetTime(triggertime);

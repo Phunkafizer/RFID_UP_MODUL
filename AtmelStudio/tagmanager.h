@@ -36,16 +36,15 @@ class Tagmanager: public Task
 		void EnterAdminTagMode(void);
 		void GiveAccess(void);
 		void DenyAccess(void);
-		void AddCurrentTag(void);
 	protected:
 	public:
 		Tagmanager(void);
 		void Init(void);
 		void Execute(void);
 		void ProcessTag(tag_item_t *tag);
-		uint16_t AddTag(uint8_t *tag);
-		void ReadTag(uint16_t idx, tag_item_t *tag);
-		uint8_t WriteTag(tag_item_t *tag, uint16_t idx);
+		uint16_t AddTag(tag_item_t *tag);
+		bool ReadTag(uint16_t idx, tag_item_t *tag);
+		uint16_t WriteTag(tag_item_t *tag, uint16_t idx);
 };
 
 extern Tagmanager tagmanager;

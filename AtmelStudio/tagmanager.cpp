@@ -18,6 +18,7 @@ DESCRIPTION: Implementation of tagmanager class
 #include "relay.h"
 #include "i2ceeprom.h"
 #include <avr/eeprom.h>
+#include <avr/wdt.h>
 
 Tagmanager tagmanager;
 
@@ -174,8 +175,8 @@ uint16_t Tagmanager::AddTag(tag_item_t *tag)
 	uint16_t idx;
 	tag_item_t temp;
 	
-	for (idx=0; idx<maxnumtags; idx++)
-	{
+	for (idx=0; idx<maxnumtags; idx++) 	{
+		wdt_reset();
 		if (ReadTag(idx, &temp)) {
 			if (memcmp(&temp, tag, sizeof(tag_item_t)) == 0) //tag already exists
 				return 0xFFFF;

@@ -10,6 +10,7 @@ DESCRIPTION: Implementation of I2CEeprom class
 #include "global.h"
 #include "i2ceeprom.h"
 #include <util/delay.h>
+#include <avr/wdt.h>
 
 I2CEeprom i2ceeprom;
 
@@ -152,5 +153,6 @@ void I2CEeprom::Empty(void)
 			adr++;
 		}
 		Stop();
+		wdt_reset();
 	}
 }

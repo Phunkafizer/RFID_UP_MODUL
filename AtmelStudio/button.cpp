@@ -9,12 +9,12 @@ DESCRIPTION: Implementation of Button class
 
 #include <avr/eeprom.h>
 #include <string.h>
+#include <avr/wdt.h>
 #include "button.h"
 #include "global.h"
 #include "led.h"
 #include "config.h"
 #include "i2ceeprom.h"
-
 #include "bus.h"
 
 Button button;
@@ -79,8 +79,10 @@ void Button::Execute(void)
 			if (useexteeprom)
 				i2ceeprom.Empty();
 			else
-				for (i=INT_EEPROM_RESERVED; i<E2END; i++)
+				for (i=INT_EEPROM_RESERVED; i<E2END; i++) {
+					wdt_reset();
 					eeprom_write_byte((uint8_t *) i, 0xFF);
+				}
 			led.SetState(STATE_IDLE);
 		}
 		

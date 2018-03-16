@@ -53,8 +53,7 @@ typedef struct
 	bool ack;
 } frameheader_t;
 
-Bus::Bus(void)
-{
+Bus::Bus(void) {
 	UCSRB = 1<<RXCIE | 1<<TXCIE | 1<<TXEN | 1<<RXEN;
 	UCSRC = 1<<URSEL | 1<<UCSZ1 | 1<<UCSZ0;
 	UBRRH = UBRR_VAL >> 8;
@@ -70,16 +69,14 @@ Bus::Bus(void)
 	txpending = false;
 }
 
-void Bus::InitSifsTimer(void)
-{
+void Bus::InitSifsTimer(void) {
 	if ((!MediaBusy()) && (tx_left > 0))
 		sifstimer.SetTime(DIFS);//sifstimer.SetTime(((rand() % 10)) * SLOT_TIME + DIFS);
 	else
 		sifstimer.SetTime(0);
 }
 
-void Bus::Execute(void)
-{
+void Bus::Execute(void) {
 	static bool old_busy = false;
 	bool busy = MediaBusy();
 	if (old_busy != busy)
@@ -199,8 +196,7 @@ void Bus::Execute(void)
 	}
 }
 
-void Bus::AddL1Data(uint8_t *data, uint8_t len, uint16_t *crc)
-{
+void Bus::AddL1Data(uint8_t *data, uint8_t len, uint16_t *crc) {
 	while (len--)
 	{
 		if (*data == ESC)
@@ -243,8 +239,7 @@ void Bus::BuildL1Frame(uint8_t *data, uint8_t len, bool ack) {
 	StartL1TX();
 }
 
-void Bus::StartL1TX(void)
-{
+void Bus::StartL1TX(void) {
 	if (!lastL1ack)
 	{
 		tx_left = 5;
@@ -257,8 +252,7 @@ void Bus::StartL1TX(void)
 	}
 }
 
-void Bus::SendData(uint8_t *data, uint8_t len)
-{
+void Bus::SendData(uint8_t *data, uint8_t len) {
 	memcpy((uint8_t*) txbuf, data, len);
 	txbufpointer = 0;
 	txlen = len;
@@ -266,13 +260,11 @@ void Bus::SendData(uint8_t *data, uint8_t len)
 	UCSRB |= 1<<UDRIE;
 }
 
-bool Bus::MediaBusy()
-{
+bool Bus::MediaBusy() {
 	return (rxbusy) || (bit_is_set(UCSRB, UDRIE));
 }
 
-void Bus::SendTagRequest(tag_item_t *tag, bool accessed)
-{
+void Bus::SendTagRequest(tag_item_t *tag, bool accessed) {
 	uint8_t data[1 + sizeof(tag_item_t) + 1]; //CMD, struct, accessed
 	data[0] = CMD_TAG_REQUEST;
 	memcpy(&data[1], tag, sizeof(tag_item_t));
@@ -280,8 +272,7 @@ void Bus::SendTagRequest(tag_item_t *tag, bool accessed)
 	BuildL1Frame(data, 1 + sizeof(tag_item_t) + 1, false);
 }
 
-void Bus::SendIOEvent(uint8_t event)
-{
+void Bus::SendIOEvent(uint8_t event) {
 	return;
 	//event: 0 = HW V3 Pinheader shortend
 	

@@ -10,19 +10,20 @@ DESCRIPTION:  Some hardware initialization and main loop
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/fuse.h>
+#include <avr/wdt.h>
 #include "task.h"
 #include "rfid.h"
 #include "tagmanager.h"
 #include "global.h"
 
-FUSES =
-{
+FUSES = {
 	(FUSE_BODEN & FUSE_CKSEL1), //.low
 	(FUSE_SPIEN & FUSE_EESAVE & FUSE_BOOTSZ1 & FUSE_BOOTSZ0) // .high
 };
 
-int main(void)
-{
+int main(void) {
+	wdt_enable(WDTO_500MS);
+	
 	Rfid rfid;
 
 	RELAISDDR |= 1<<RELAISPINX;
@@ -44,8 +45,8 @@ int main(void)
 	tagmanager.Init();
 	rfid.Init();
 	
-	while (1)
-	{
+	while (1) {
+		wdt_reset();
 		Task::run();
 
 		tag_item_t tag;
